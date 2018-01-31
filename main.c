@@ -18,19 +18,21 @@
 #define TOP_PWM 0x1FF
 
 
-volatile unsigned char  flag;
+
 volatile unsigned int timeCount, SolderPower;
-unsigned int  EncData, realTemp, *a;
-unsigned char EncState=0, T_doneBuz, cifra[4], milsCount=0;
+unsigned int  realTemp, *a;
+static unsigned int  EncData;
+unsigned char EncState=0, cifra[4], milsCount=0;
 EEMEM  uint16_t TempMem;
 
 //--------flags-----------
-#define _status    0
-#define _wakeup    1
-#define _blink    2
-#define _writeMem  3
-#define _readyToSleep  4
-#define _doneBuz 5
+volatile unsigned char  flag;
+#define _status         0
+#define _wakeup         1
+#define _blink          2
+#define _writeMem       3
+#define _readyToSleep   4
+#define _doneBuz        5
 //if ( flag & _BV(_status)) check flag
 //flag |= _BV(_status); set 1
 //flag &= ~_BV(_status); set 0
@@ -137,12 +139,12 @@ ISR (TIMER0_OVF_vect) //Таймер 0 - для отсчёта временны�
     flag |= _BV(_readyToSleep);
   }
 
-  if(timeCount >= 28000) {//~15 минут 28175
+  if(timeCount >= 28000) {//~15 минут 28175 //включаем режим sleep
+    timeCount = 0;//Обнулить счётчик переполнений
     flag &= ~_BV(_readyToSleep);
     flag &= ~_BV(_status); // set 0 - sleep mode;
     TCCR1B = 0;//ШИМ остановить
     OCR1A =0;
-    timeCount = 0;//Обнулить счётчик переполнений
     TCNT0 = 0;
     TCCR0B = 0;
   }
@@ -190,10 +192,10 @@ uint16_t Kpdstr;//=1000;
 static uint8_t p=0;//Счётчики для "пипикания" 
 
 uint32_t buf=0, buf_l=0, T_izm_Sum=0;
-uint16_t T_izm,T_zad, T_buf;//OCR_1=0,Tsm=20;;
-uint16_t adc_count, adc, zap_max=0;
-uint8_t Tsm=20, cnt_proh = 0,cnt_proh_sm = 0;
-int8_t diffTemp;
+uint16_t T_izm,T_zad, T_avr;//OCR_1=0,Tsm=20;;
+uint16_t adc_count, adc, zap_max;
+uint8_t cnt_proh = 0;
+int16_t diffTemp=0;
 
 
   
@@ -221,7 +223,6 @@ PORTC=0x07;
 DDRC=0x00;
 
 TCCR0A=0x00;
-//TCCR0B=0x05;
 TCNT0=0x00;
 OCR0A=0x00;
 OCR0B=0x00;
@@ -248,7 +249,7 @@ sei();
 
 EncData = eeprom_read_word (&TempMem);
 //EncData = eeprom_read_word(0x10);
-if ((EncData >350)||(EncData<50)) EncData=280;
+if ((EncData >350)||(EncData<50)) EncData=240;
 Kpdstr = 1000;//eeprom_read_word(&Kpdstr_eep);
 //EncData = 280;
 
@@ -256,7 +257,7 @@ a = &EncData;
 
 flag |= _BV(_blink); //мигаем индикатором
 flag |= _BV(_status); //status = work;
-flag |= _BV(_doneBuz); // пикнуть когда установиться нужная температура
+flag |= _BV(_doneBuz); // пикнуть когда установится нужная температура
 
 TCCR0B |= _BV(CS02) | _BV(CS00); // 8Mгц/1024 = 7812,5 Гц = 32мс
 TCCR1B |=  _BV(CS10); // clk/1
@@ -283,29 +284,38 @@ Buz(2);
       buf=buf/adc_count;
 
       buf_l=const_THA0+((long)buf*1000)/const_THA;
-      buf_l=buf_l*Kpdstr/1000; //учитываем подстроечный коэффициент
+      //buf_l=buf_l*Kpdstr/1000; //учитываем подстроечный коэффициент
       T_izm=(int)buf_l;  //измеренная температура *10
       T_zad = EncData*10;
 
-      if((T_zad+Tsm)>T_izm) {//смещаем уставку на Tsm С(град*10) вверх, а потом на каждый градус отклонения даем 10%шим
-        buf_l=(((long)T_zad+(long)Tsm-(long)T_izm))*TOP_PWM/100;
-        buf=(int)buf_l;
-        if(buf>zap_max) {   //для плавного включения
-          zap_max=zap_max+5;
-          if(zap_max>TOP_PWM) {
-            zap_max=TOP_PWM;
-          }
-          buf=zap_max;
-        }
-        else {
-          zap_max = 0;
-        }
-      }else {
-        buf=0;
-        zap_max = 0;
-      }
+      
+      if(T_zad >T_izm) {//смещаем уставку на Tsm С(град*10) вверх, а потом на каждый градус отклонения даем 10%шим
 
-      SolderPower = buf;
+        diffTemp = T_zad - T_izm;
+        if (diffTemp >= 40) 
+          zap_max = TOP_PWM;
+        else zap_max = 10*diffTemp;  
+
+        buf_l=(((long)T_zad-(long)T_izm))*TOP_PWM/zap_max;
+        buf=(int)buf_l;
+        if (buf > TOP_PWM) buf = TOP_PWM; 
+      //   if(buf>zap_max) {   //для плавного включения
+      //     zap_max=zap_max+5;
+      //     if(zap_max>TOP_PWM) {
+      //       zap_max=TOP_PWM;
+      //     }
+      //     buf=zap_max;
+      //   }
+      //   else {
+      //     zap_max = 25;
+      //   }
+      // }else {
+      //   buf=25;
+      //   zap_max = 25;
+      } else buf = 0;
+
+
+      SolderPower = (int)buf;
       //realTemp = buf;
       cli();
       OCR1AH = (char)(SolderPower>>8);
@@ -313,35 +323,33 @@ Buz(2);
       sei();
 
 
-
       T_izm_Sum = T_izm_Sum + T_izm;
       if(cnt_proh>9) {
         cnt_proh = 0;
-        T_buf = T_izm_Sum/100;
+         
+        T_avr = T_izm_Sum/100;
+        diffTemp = EncData - T_avr;
+        if (diffTemp >=-4 && diffTemp <= 4 && !(flag & (_BV(_doneBuz)))) 
+          realTemp = T_avr;//EncData;
+        else 
+          realTemp = T_avr;  
 
-        diffTemp = EncData - T_buf;
-        if (diffTemp >=-4 && diffTemp <=4 && !(flag & _BV(_doneBuz)))
-          realTemp = EncData;
-        else   
-          realTemp = T_buf;
-        
-
-        buf = T_izm_Sum/10;
-        if(((T_zad+Tsm)>=buf)&&(buf>=(T_zad+Tsm-100))) { //считаем проходы когда измер температура в диапазоне регулирования 10С
-          cnt_proh_sm++; //счетчик проходов для корректир смещения если темпер в диапазоне
-           //flg_tch=0;
-        } else {
-          cnt_proh_sm=0;
-               //flg_tch=1; //флаг мигания точки если температура за диапазоном регулирования
-        };
+        // buf = T_izm_Sum/10;
+        // if(((T_zad+Tsm)>=buf)&&(buf>=(T_zad+Tsm-100))) { //считаем проходы когда измер температура в диапазоне регулирования 10С
+        //   cnt_proh_sm++; //счетчик проходов для корректир смещения если темпер в диапазоне
+        //    //flg_tch=0;
+        // } else {
+        //   cnt_proh_sm=0;
+        //        //flg_tch=1; //флаг мигания точки если температура за диапазоном регулирования
+        // };
 
         T_izm_Sum = 0;
 
-        if(cnt_proh_sm>=1) {//если температура в пределах была уже 1проходов, то корректируем смещение уставки
-          if((buf>T_zad)&&(Tsm>0)){Tsm--;};
-          if((buf<T_zad)&&(Tsm<20)){Tsm++;};
-          cnt_proh_sm=0;
-        };
+        // if(cnt_proh_sm>=1) {//если температура в пределах была уже 1проходов, то корректируем смещение уставки
+        //   if((buf>T_zad)&&(Tsm>0)){Tsm--;};
+        //   if((buf<T_zad)&&(Tsm<20)){Tsm++;};
+        //   cnt_proh_sm=0;
+        // };
       }
 
       if ((realTemp == EncData) && (flag & _BV(_doneBuz))) {
@@ -390,3 +398,4 @@ Buz(2);
     }
   }   
 }
+
