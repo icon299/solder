@@ -190,9 +190,10 @@ uint16_t Kpdstr;//=1000;
 static uint8_t p=0;//Счётчики для "пипикания" 
 
 uint32_t buf=0, buf_l=0, T_izm_Sum=0;
-uint16_t T_izm,T_zad;//OCR_1=0,Tsm=20;;
+uint16_t T_izm,T_zad, T_buf;//OCR_1=0,Tsm=20;;
 uint16_t adc_count, adc, zap_max=0;
 uint8_t Tsm=20, cnt_proh = 0,cnt_proh_sm = 0;
+int8_t diffTemp;
 
 
   
@@ -316,8 +317,14 @@ Buz(2);
       T_izm_Sum = T_izm_Sum + T_izm;
       if(cnt_proh>9) {
         cnt_proh = 0;
+        T_buf = T_izm_Sum/100;
 
-        realTemp = T_izm_Sum/100;
+        diffTemp = EncData - T_buf;
+        if (diffTemp >=-4 && diffTemp <=4 && !(flag & _BV(_doneBuz)))
+          realTemp = EncData;
+        else   
+          realTemp = T_buf;
+        
 
         buf = T_izm_Sum/10;
         if(((T_zad+Tsm)>=buf)&&(buf>=(T_zad+Tsm-100))) { //считаем проходы когда измер температура в диапазоне регулирования 10С
@@ -383,4 +390,3 @@ Buz(2);
     }
   }   
 }
-
